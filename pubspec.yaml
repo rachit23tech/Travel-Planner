@@ -1,0 +1,58 @@
+name: travel_planner
+description: A travel planner app using OpenStreetMap (Nominatim) for search and OSRM for routing.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.5.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.6
+
+  flutter_map: ^7.0.0
+  latlong2: ^0.9.0
+  http: ^1.2.0
+  geolocator: ^13.0.0
+  shared_preferences: ^2.2.0
+
+  firebase_core: ^3.8.0
+  firebase_auth: ^5.3.3
+  cloud_firestore: ^5.5.0
+  google_sign_in: ^6.2.2
+  google_fonts: ^8.2.1
+  flutter_tts: ^4.2.5
+  flutter_map_tile_caching: ^10.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^4.0.0
+  flutter_launcher_icons: ^0.14.4
+  flutter_native_splash: ^2.4.8
+
+flutter:
+  uses-material-design: true
+  assets:
+    - assets/icon/
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "assets/icon/app_icon.png"
+  adaptive_icon_background: "#1B5E5A"
+  adaptive_icon_foreground: "assets/icon/app_icon_foreground.png"
+  min_sdk_android: 23
+
+flutter_native_splash:
+  color: "#FAF7F1"
+  image: assets/icon/splash_logo_light.png
+  color_dark: "#0B2726"
+  image_dark: assets/icon/app_icon_foreground.png
+  android_12:
+    image: assets/icon/splash_logo_light.png
+    icon_background_color: "#FAF7F1"
+    image_dark: assets/icon/app_icon_foreground.png
+    icon_background_color_dark: "#0B2726"
+  android: true
+  ios: false
