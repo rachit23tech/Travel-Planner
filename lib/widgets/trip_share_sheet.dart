@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:latlong2/latlong.dart';
 import 'package:share_plus/share_plus.dart';
+// Using the older static Share.share(...) API (deprecated but present
+// and working) rather than share_plus 11+'s SharePlus.instance.share -
+// pubspec.yaml pins share_plus to ^10.1.4, which predates that API.
 
 import '../models/trip_share.dart';
 import '../services/trip_share_service.dart';
@@ -80,10 +83,10 @@ class _TripShareSheetState extends State<TripShareSheet> {
       );
       final id = Uri.parse(link).queryParameters['id'];
       if (id != null) widget.onShareStarted(id);
-      await SharePlus.instance.share(ShareParams(
-        text: "I'm sharing my live location on Iter: $link",
+      await Share.share(
+        "I'm sharing my live location on Iter: $link",
         subject: 'My live location',
-      ));
+      );
     });
   }
 
@@ -96,10 +99,10 @@ class _TripShareSheetState extends State<TripShareSheet> {
         destination: widget.destination,
       );
       widget.onShareStarted(code);
-      await SharePlus.instance.share(ShareParams(
-        text: 'Join my convoy on Iter - open the app, tap Convoy, then Join, and enter code $code',
+      await Share.share(
+        'Join my convoy on Iter - open the app, tap Convoy, then Join, and enter code $code',
         subject: 'Join my Iter convoy',
-      ));
+      );
     });
   }
 
@@ -117,15 +120,15 @@ class _TripShareSheetState extends State<TripShareSheet> {
     final share = widget.activeShare;
     if (share == null) return;
     if (share.isConvoy) {
-      await SharePlus.instance.share(ShareParams(
-        text: 'Join my convoy on Iter - open the app, tap Convoy, then Join, and enter code ${share.id}',
+      await Share.share(
+        'Join my convoy on Iter - open the app, tap Convoy, then Join, and enter code ${share.id}',
         subject: 'Join my Iter convoy',
-      ));
+      );
     } else {
-      await SharePlus.instance.share(ShareParams(
-        text: "I'm sharing my live location on Iter: ${TripShareService.webBaseUrl}/live.html?id=${share.id}",
+      await Share.share(
+        "I'm sharing my live location on Iter: ${TripShareService.webBaseUrl}/live.html?id=${share.id}",
         subject: 'My live location',
-      ));
+      );
     }
   }
 
