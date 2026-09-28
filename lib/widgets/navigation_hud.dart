@@ -15,6 +15,8 @@ class NavigationHud extends StatelessWidget {
   final VoidCallback onStop;
   final bool voiceEnabled;
   final VoidCallback? onToggleVoice;
+  final VoidCallback? onShare;
+  final bool sharingActive;
 
   const NavigationHud({
     super.key,
@@ -25,6 +27,8 @@ class NavigationHud extends StatelessWidget {
     this.arrived = false,
     this.voiceEnabled = true,
     this.onToggleVoice,
+    this.onShare,
+    this.sharingActive = false,
   });
 
   String _distanceLabel(double meters) {
@@ -107,6 +111,15 @@ class NavigationHud extends StatelessWidget {
                       ],
               ),
             ),
+            if (onShare != null)
+              IconButton(
+                icon: Icon(
+                  sharingActive ? Icons.groups : Icons.share_location,
+                  color: onPrimary,
+                ),
+                tooltip: sharingActive ? 'Sharing this trip' : 'Share this trip',
+                onPressed: onShare,
+              ),
             if (onToggleVoice != null)
               IconButton(
                 icon: Icon(

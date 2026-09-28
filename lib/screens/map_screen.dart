@@ -6,14 +6,18 @@ import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
 
+import '../models/combo_stop.dart';
 import '../models/place.dart';
 import '../models/poi.dart';
 import '../models/route_result.dart';
+import '../models/trip_share.dart';
 import '../services/geocoding_service.dart';
 import '../services/auth_service.dart';
 import '../services/poi_service.dart';
 import '../services/routing_service.dart';
 import '../services/saved_places_service.dart';
+import '../services/trip_break_planner.dart';
+import '../services/trip_share_service.dart';
 import '../services/voice_guidance_service.dart';
 import '../services/offline_maps_service.dart';
 import '../utils/navigation_geometry.dart';
@@ -23,6 +27,7 @@ import '../widgets/navigation_hud.dart';
 import '../widgets/place_card.dart';
 import '../widgets/place_search_field.dart';
 import '../widgets/route_info_panel.dart';
+import '../widgets/trip_share_sheet.dart';
 
 /// Mirrors Google Maps' own flow, not its visuals: browse/search first,
 /// then step into "directions" only once the user asks for a route.
@@ -57,6 +62,8 @@ class _MapScreenState extends State<MapScreen> {
   final RoutingService _routingService = RoutingService();
   final SavedPlacesService _savedPlacesService = SavedPlacesService();
   final PoiService _poiService = PoiService();
+  final TripBreakPlanner _breakPlanner = TripBreakPlanner(PoiService());
+  final TripShareService _tripShareService = TripShareService();
   final VoiceGuidanceService _voiceService = VoiceGuidanceService();
 
   static const LatLng _fallbackCenter = LatLng(20.5937, 78.9629); // India
@@ -99,6 +106,14 @@ class _MapScreenState extends State<MapScreen> {
   bool _downloadingOffline = false;
   StreamSubscription<double>? _offlineDownloadSub;
 
+  // --- Suggested rest stops for the current route ---
+  List<ComboStop> _suggestedStops = [];
+
+  // --- Live location sharing / convoy ---
+  TripShare? _activeShare;
+  StreamSubscription<TripShare?>? _shareSub;
+  Timer? _shareBroadcastTimer;
+
   @override
   void initState() {
     super.initState();
@@ -112,6 +127,8 @@ class _MapScreenState extends State<MapScreen> {
   void dispose() {
     _positionSub?.cancel();
     _offlineDownloadSub?.cancel();
+    _shareSub?.cancel();
+    _shareBroadcastTimer?.cancel();
     _voiceService.dispose();
     super.dispose();
   }
@@ -351,6 +368,7 @@ class _MapScreenState extends State<MapScreen> {
       _selectedAlternativeIndex = 0;
       _previewRoutes = {};
       _stops = [];
+      _suggestedStops = [];
     });
   }
 
@@ -417,8 +435,10 @@ class _MapScreenState extends State<MapScreen> {
       _route = alternatives.first;
       _previewRoutes = previews;
       _loadingRoute = false;
+      _suggestedStops = [];
     });
     _centerOnRoute();
+    _updateSuggestedStops();
   }
 
   void _selectAlternative(int index) {
@@ -426,7 +446,26 @@ class _MapScreenState extends State<MapScreen> {
     setState(() {
       _selectedAlternativeIndex = index;
       _route = _alternatives[index];
+      _suggestedStops = [];
     });
+    _updateSuggestedStops();
+  }
+
+  /// Proactively plans rest stops for this route (fuel/food/restroom
+  /// clustered together, roughly every 2 hours of driving) - runs in
+  /// the background after a route is fetched, so it never blocks the
+  /// route preview from showing. Silently does nothing for a short
+  /// trip, a slow/failed lookup, or if the route has since changed.
+  Future<void> _updateSuggestedStops() async {
+    final route = _route;
+    if (route == null) return;
+    try {
+      final stops = await _breakPlanner.planBreaks(route);
+      if (!mounted || _route != route) return;
+      setState(() => _suggestedStops = stops);
+    } catch (_) {
+      // Suggested stops are a nice-to-have, not core routing - fail quietly.
+    }
   }
 
   /// Short ETA label for a mode button ("12 min"), blank until a preview
@@ -633,6 +672,17 @@ class _MapScreenState extends State<MapScreen> {
     _advanceNavigationStep(point, route);
     _maybeAnnounceUpcomingStep();
 
+    final share = _activeShare;
+    if (share != null) {
+      _tripShareService.updatePosition(
+        share.id,
+        position: point,
+        headingDeg: _liveHeading,
+        speedKmh: _liveSpeedKmh,
+        etaSeconds: _estimateEtaSeconds(point, route),
+      );
+    }
+
     const offRouteThresholdMeters = 45.0;
     final distanceOffRoute = NavigationGeometry.distanceToRoute(point, route.points);
     final now = DateTime.now();
@@ -796,6 +846,103 @@ class _MapScreenState extends State<MapScreen> {
     }
   }
 
+  // --- Live location sharing / convoy ---
+
+  Future<void> _showShareSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      builder: (sheetContext) {
+        final destinationPlace = _stops.isNotEmpty ? _stops.last.place : null;
+        return TripShareSheet(
+          shareService: _tripShareService,
+          activeShare: _activeShare,
+          isOwner: widget.authService.currentUser?.uid == _activeShare?.ownerUid,
+          getCurrentPosition: () async {
+            if (_liveMyPosition != null) return _liveMyPosition;
+            try {
+              final position = await _determinePosition();
+              return LatLng(position.latitude, position.longitude);
+            } catch (_) {
+              return null;
+            }
+          },
+          destinationLabel: destinationPlace?.displayName,
+          destination: destinationPlace != null
+              ? LatLng(destinationPlace.lat, destinationPlace.lon)
+              : null,
+          onShareStarted: _beginWatchingShare,
+          onShareEnded: () {
+            Navigator.of(sheetContext).pop();
+            _stopWatchingShare();
+          },
+        );
+      },
+    );
+  }
+
+  void _beginWatchingShare(String shareId) {
+    _shareSub?.cancel();
+    _shareSub = _tripShareService.watch(shareId).listen((share) {
+      if (!mounted) return;
+      setState(() => _activeShare = share);
+    });
+
+    // Keeps a solo "share my location" (or an idle convoy member) live
+    // even when not actively navigating - the nav position stream
+    // takes over broadcasting, at a much tighter interval, once
+    // _startNavigation begins.
+    _shareBroadcastTimer?.cancel();
+    _shareBroadcastTimer = Timer.periodic(
+      const Duration(seconds: 15),
+      (_) => _broadcastPositionIfSharing(),
+    );
+  }
+
+  void _stopWatchingShare() {
+    _shareSub?.cancel();
+    _shareSub = null;
+    _shareBroadcastTimer?.cancel();
+    _shareBroadcastTimer = null;
+    if (!mounted) return;
+    setState(() => _activeShare = null);
+  }
+
+  Future<void> _broadcastPositionIfSharing() async {
+    final share = _activeShare;
+    // While navigating, _handleNavigationPosition already broadcasts on
+    // every GPS fix, far more often than this timer - no need to double up.
+    if (share == null || _navigating) return;
+    try {
+      final position = await Geolocator.getCurrentPosition();
+      await _tripShareService.updatePosition(
+        share.id,
+        position: LatLng(position.latitude, position.longitude),
+        headingDeg: position.heading.isFinite ? position.heading : null,
+        speedKmh: position.speed.isFinite ? position.speed * 3.6 : null,
+      );
+    } catch (_) {
+      // Skip this tick - the next timer fire fifteen seconds from now
+      // will simply try again.
+    }
+  }
+
+  /// A rough remaining-time estimate for sharing with convoy members:
+  /// straight-line distance from here to the route's end, divided by
+  /// this route's own average pace. Not as precise as the live ETA
+  /// Google Maps shows for your own trip, but consistent enough across
+  /// everyone in a convoy to answer "who's furthest behind" - which is
+  /// the only thing it's used for.
+  int? _estimateEtaSeconds(LatLng point, RouteResult route) {
+    if (route.points.isEmpty || route.distanceMeters <= 0 || route.durationSeconds <= 0) {
+      return null;
+    }
+    final remainingMeters = NavigationGeometry.distanceMeters(point, route.points.last);
+    final avgSpeedMps = route.distanceMeters / route.durationSeconds;
+    if (avgSpeedMps <= 0) return null;
+    return (remainingMeters / avgSpeedMps).round();
+  }
+
   @override
   Widget build(BuildContext context) {
     final markers = <Marker>[
@@ -820,6 +967,24 @@ class _MapScreenState extends State<MapScreen> {
             child: const Icon(Icons.navigation, color: Colors.blue, size: 36),
           ),
         ),
+      if (_activeShare != null && _activeShare!.isConvoy)
+        for (final member in _activeShare!.members)
+          if (member.uid != widget.authService.currentUser?.uid)
+            Marker(
+              point: member.position,
+              width: 40,
+              height: 40,
+              child: Tooltip(
+                message: member.displayName,
+                child: CircleAvatar(
+                  backgroundColor: Colors.deepOrange,
+                  child: Text(
+                    member.displayName.isNotEmpty ? member.displayName[0].toUpperCase() : '?',
+                    style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
+                  ),
+                ),
+              ),
+            ),
     ];
 
     return Scaffold(
@@ -875,6 +1040,8 @@ class _MapScreenState extends State<MapScreen> {
                           onStop: _stopNavigation,
                           voiceEnabled: _voiceEnabled,
                           onToggleVoice: _toggleVoice,
+                          onShare: _showShareSheet,
+                          sharingActive: _activeShare != null,
                         )
                       : _buildDirectionsBar()),
             ),
@@ -945,6 +1112,8 @@ class _MapScreenState extends State<MapScreen> {
               onStartNavigation: _startNavigation,
               onDownloadOffline: _downloadOfflineRoute,
               downloadingOffline: _downloadingOffline,
+              suggestedStops: _suggestedStops,
+              onAddComboStop: (stop) => _addPoiAsStop(stop.anchor),
             ),
         ],
       ),
@@ -1000,6 +1169,12 @@ class _MapScreenState extends State<MapScreen> {
                     selectedPlace: _searchedPlace,
                     onPlaceSelected: _onSearchResultSelected,
                   ),
+                ),
+                const SizedBox(width: 4),
+                IconButton(
+                  tooltip: _activeShare != null ? 'Sharing your trip' : 'Share your location',
+                  icon: Icon(_activeShare != null ? Icons.groups : Icons.share_location),
+                  onPressed: _showShareSheet,
                 ),
                 const SizedBox(width: 4),
                 _buildAccountButton(),
@@ -1202,6 +1377,13 @@ class _MapScreenState extends State<MapScreen> {
                   label: const Text('Add stop'),
                 ),
                 const Spacer(),
+                IconButton(
+                  tooltip: _activeShare != null
+                      ? (_activeShare!.isConvoy ? 'Convoy' : 'Sharing your location')
+                      : 'Share trip / start convoy',
+                  icon: Icon(_activeShare != null ? Icons.groups : Icons.share_location),
+                  onPressed: _showShareSheet,
+                ),
                 TextButton.icon(
                   onPressed: _route == null ? null : _showNearbyAlongRoute,
                   icon: const Icon(Icons.restaurant),

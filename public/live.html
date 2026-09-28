@@ -1,0 +1,164 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1">
+<title>Live location - Iter</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+<style>
+  :root {
+    --ink-teal: #0E3433;
+    --route-teal: #1B5E5A;
+    --teal-tint: #A9D2C9;
+    --trail-coral: #F2643B;
+    --cream: #FAF7F1;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: var(--cream);
+    color: var(--ink-teal);
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    padding: 14px 16px;
+    background: var(--route-teal);
+    color: var(--cream);
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-shrink: 0;
+  }
+  header .brand { font-weight: 700; font-size: 15px; letter-spacing: 0.02em; }
+  header .sub { font-size: 13px; opacity: 0.85; margin-left: auto; text-align: right; }
+  #map { flex: 1; min-height: 0; }
+  #status {
+    padding: 40px 20px;
+    text-align: center;
+    font-size: 15px;
+    color: var(--ink-teal);
+    display: none;
+  }
+  .pin {
+    width: 18px; height: 18px; border-radius: 50%;
+    background: var(--trail-coral);
+    border: 3px solid var(--cream);
+    box-shadow: 0 1px 4px rgba(0,0,0,0.4);
+  }
+  footer {
+    padding: 8px 16px;
+    font-size: 12px;
+    color: var(--ink-teal);
+    opacity: 0.6;
+    text-align: center;
+    flex-shrink: 0;
+  }
+</style>
+</head>
+<body>
+  <header>
+    <span class="brand">Iter</span>
+    <span class="sub" id="headerInfo">Loading live location…</span>
+  </header>
+  <div id="map"></div>
+  <div id="status"></div>
+  <footer>Live location shared from the Iter app - updates automatically.</footer>
+
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script>
+    // Firestore-only usage - this apiKey is the same one already
+    // embedded in the built Android app, it's not a secret; the
+    // Firestore security rules (not key secrecy) are what scope this
+    // page to reading only documents explicitly marked `public: true`.
+    firebase.initializeApp({
+      apiKey: 'AIzaSyCvgLUXXKhFFmFRNW5r7u37t2PFr9Bp02g',
+      authDomain: 'travel-planner-59ded.firebaseapp.com',
+      projectId: 'travel-planner-59ded',
+    });
+    const db = firebase.firestore();
+
+    const params = new URLSearchParams(window.location.search);
+    const shareId = params.get('id');
+    const statusEl = document.getElementById('status');
+    const mapEl = document.getElementById('map');
+    const headerInfo = document.getElementById('headerInfo');
+
+    function showStatus(message) {
+      statusEl.textContent = message;
+      statusEl.style.display = 'block';
+      mapEl.style.display = 'none';
+    }
+
+    if (!shareId) {
+      showStatus('No location was specified in this link.');
+    } else {
+      let map = null;
+      let marker = null;
+      let lastUpdatedAt = null;
+
+      db.collection('shares').doc(shareId).onSnapshot(
+        (snap) => {
+          const data = snap.data();
+          if (!data || data.public !== true || data.active !== true) {
+            showStatus('This live location is no longer available.');
+            return;
+          }
+          const members = data.members || {};
+          const memberIds = Object.keys(members);
+          if (memberIds.length === 0) {
+            showStatus('Waiting for a location update…');
+            return;
+          }
+          const member = members[memberIds[0]];
+          const lat = member.lat;
+          const lng = member.lng;
+          if (typeof lat !== 'number' || typeof lng !== 'number') {
+            showStatus('Waiting for a location update…');
+            return;
+          }
+
+          statusEl.style.display = 'none';
+          mapEl.style.display = 'block';
+
+          if (!map) {
+            map = L.map('map').setView([lat, lng], 15);
+            L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+              attribution: '&copy; OpenStreetMap contributors',
+            }).addTo(map);
+            const icon = L.divIcon({ className: '', html: '<div class="pin"></div>', iconSize: [18, 18] });
+            marker = L.marker([lat, lng], { icon }).addTo(map);
+          } else {
+            marker.setLatLng([lat, lng]);
+            map.panTo([lat, lng]);
+          }
+
+          const name = member.displayName || 'Traveler';
+          const destination = data.destinationLabel ? ' · heading to ' + data.destinationLabel : '';
+          headerInfo.textContent = name + destination;
+
+          if (member.updatedAt && member.updatedAt.toDate) {
+            lastUpdatedAt = member.updatedAt.toDate();
+          }
+        },
+        () => {
+          showStatus("This live location isn't available - the link may be wrong or sharing may have ended.");
+        }
+      );
+
+      // Keeps the "last updated" wording fresh between snapshots,
+      // rather than only right when a new position comes in.
+      setInterval(() => {
+        if (!lastUpdatedAt || statusEl.style.display === 'block') return;
+        const seconds = Math.max(0, Math.round((Date.now() - lastUpdatedAt.getTime()) / 1000));
+        const label = seconds < 60 ? seconds + 's ago' : Math.round(seconds / 60) + 'm ago';
+        const base = headerInfo.textContent.split(' · updated')[0];
+        headerInfo.textContent = base + ' · updated ' + label;
+      }, 1000);
+    }
+  </script>
+</body>
+</html>

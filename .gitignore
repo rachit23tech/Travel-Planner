@@ -50,3 +50,6 @@ app.*.map.json
 # Firebase config - contains project id / API key / OAuth client id;
 # each dev/CI should supply their own from the Firebase console.
 android/app/google-services.json
+
+# Presentation notes — personal reference, not part of the source.
+ppt.md

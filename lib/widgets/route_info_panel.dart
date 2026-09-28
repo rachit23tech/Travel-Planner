@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 
+import '../models/combo_stop.dart';
 import '../models/route_result.dart';
 import '../utils/maneuver_icons.dart';
+import '../utils/poi_style.dart';
 
 /// Bottom sheet showing the route's distance/duration, any alternative
 /// routes OSRM offered for the current mode, and a scrollable turn-by-turn
@@ -15,6 +17,8 @@ class RouteInfoPanel extends StatelessWidget {
   final VoidCallback onStartNavigation;
   final VoidCallback? onDownloadOffline;
   final bool downloadingOffline;
+  final List<ComboStop> suggestedStops;
+  final ValueChanged<ComboStop>? onAddComboStop;
 
   const RouteInfoPanel({
     super.key,
@@ -26,6 +30,8 @@ class RouteInfoPanel extends StatelessWidget {
     this.selectedIndex = 0,
     this.onDownloadOffline,
     this.downloadingOffline = false,
+    this.suggestedStops = const [],
+    this.onAddComboStop,
   });
 
   @override
@@ -127,6 +133,23 @@ class RouteInfoPanel extends StatelessWidget {
                   ],
                 ],
               ),
+              if (suggestedStops.isNotEmpty) ...[
+                const SizedBox(height: 4),
+                Text('Suggested stops', style: Theme.of(context).textTheme.labelLarge),
+                const SizedBox(height: 8),
+                SizedBox(
+                  height: 92,
+                  child: ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    itemCount: suggestedStops.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 8),
+                    itemBuilder: (context, index) => _ComboStopCard(
+                      stop: suggestedStops[index],
+                      onAdd: onAddComboStop == null ? null : () => onAddComboStop!(suggestedStops[index]),
+                    ),
+                  ),
+                ),
+              ],
               const Divider(),
               if (route.steps.isEmpty)
                 const Padding(
@@ -150,6 +173,60 @@ class RouteInfoPanel extends StatelessWidget {
           ),
         );
       },
+    );
+  }
+}
+
+/// One proactively-suggested rest stop: what's clustered there (fuel,
+/// food, a restroom, ...) and roughly how far into the trip it falls.
+class _ComboStopCard extends StatelessWidget {
+  final ComboStop stop;
+  final VoidCallback? onAdd;
+
+  const _ComboStopCard({required this.stop, required this.onAdd});
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 190,
+      child: Card(
+        margin: EdgeInsets.zero,
+        child: InkWell(
+          onTap: onAdd,
+          borderRadius: BorderRadius.circular(12),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Row(
+                  children: [
+                    for (final category in stop.categories.take(4))
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: Icon(iconForPoiCategory(category), size: 18),
+                      ),
+                    const Spacer(),
+                    if (onAdd != null) const Icon(Icons.add_circle_outline, size: 18),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  stop.anchor.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: Theme.of(context).textTheme.bodyMedium,
+                ),
+                Text(
+                  stop.timeIntoTripLabel,
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
