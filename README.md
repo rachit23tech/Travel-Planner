@@ -69,7 +69,13 @@ public/
 
 2. **Firebase**: create a Firebase project, add an Android app with package name `com.example.travel_planner`, then download its `google-services.json` and place it at `android/app/google-services.json`. This file is git-ignored and not included in the repo, so the app won't build without adding your own.
 
-3. **Geoapify**: sign up at [geoapify.com](https://www.geoapify.com/) (free, no card required, 3,000 requests/day) and paste your API key into the `geoapifyApiKey` constant in `lib/services/poi_service.dart`. Without a key, nearby-places search falls back to the public OpenStreetMap Overpass mirrors, which are noticeably less reliable under load.
+3. **Geoapify**: sign up at [geoapify.com](https://www.geoapify.com/) (free, no card required, 3,000 requests/day), then pass your key at build/run time rather than hardcoding it (this repo is public, and the key would otherwise end up committed):
+
+   ```
+   flutter run --dart-define=GEOAPIFY_API_KEY=your_key_here
+   ```
+
+   (or add the same `--dart-define` to your IDE's run configuration). Without it, nearby-places search falls back to the public OpenStreetMap Overpass mirrors, which are noticeably less reliable under load.
 
 4. Generate the launcher icon and splash screen (first run only, or after changing the source images in `assets/icon/`):
 
@@ -96,10 +102,10 @@ public/
 ### Building a release APK
 
 ```
-flutter build apk --release
+flutter build apk --release --dart-define=GEOAPIFY_API_KEY=your_key_here
 ```
 
-The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. The release build type currently signs with the debug key, so this APK installs fine on any phone for sideloading; add your own signing config in `android/app/build.gradle.kts` before publishing anywhere that requires a proper release signature (e.g. the Play Store).
+(omit the `--dart-define` if you are fine with nearby-places search falling back to Overpass for that build.) The APK is written to `build/app/outputs/flutter-apk/app-release.apk`. The release build type currently signs with the debug key, so this APK installs fine on any phone for sideloading; add your own signing config in `android/app/build.gradle.kts` before publishing anywhere that requires a proper release signature (e.g. the Play Store).
 
 ## Live location viewer
 

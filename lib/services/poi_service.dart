@@ -17,20 +17,26 @@ import '../utils/navigation_geometry.dart';
 ///  - Restrooms have no clean Geoapify category, so they still go
 ///    through the free public OpenStreetMap Overpass mirrors, raced in
 ///    parallel (see `_searchOverpass` below).
-/// Until a Geoapify key is set, everything falls back to Overpass, same
-/// as before.
+/// Until a Geoapify key is supplied via --dart-define, everything falls
+/// back to Overpass, same as before.
 class PoiService {
   // ---------------------------------------------------------------------
   // Geoapify (https://www.geoapify.com/) - primary provider.
   //
   // Get a free key: geoapify.com -> sign up -> My Projects -> the
   // default project already has one -> copy it here. Free tier is
-  // 3000 requests/day, no card required. Until this is filled in, every
+  // 3000 requests/day, no card required. Until one is supplied, every
   // category falls back to the Overpass mirrors below (flaky under
   // load, which is the "server took too long to respond" you've been
   // seeing).
+  //
+  // Read from a build-time flag rather than hardcoded, since this file
+  // is committed to a public repo: run with
+  //   flutter run --dart-define=GEOAPIFY_API_KEY=your_key_here
+  // (or add the same --dart-define to your IDE's run configuration) so
+  // the real key only ever lives on your machine, never in git.
   // ---------------------------------------------------------------------
-  static const String geoapifyApiKey = '';
+  static const String geoapifyApiKey = String.fromEnvironment('GEOAPIFY_API_KEY');
 
   static const _geoapifyCategoryTags = {
     'food': ['catering.restaurant', 'catering.cafe', 'catering.fast_food'],
@@ -236,7 +242,7 @@ class PoiService {
       throw Exception('That server took too long to respond.');
     }
     if (response.statusCode == 401 || response.statusCode == 403) {
-      throw Exception('Geoapify rejected the API key - check geoapifyApiKey in poi_service.dart.');
+      throw Exception('Geoapify rejected the API key - check the GEOAPIFY_API_KEY --dart-define value.');
     }
     if (response.statusCode != 200) {
       debugPrint('Geoapify: HTTP ${response.statusCode} - ${response.body}');
