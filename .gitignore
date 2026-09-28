@@ -53,3 +53,6 @@ android/app/google-services.json
 
 # Presentation notes — personal reference, not part of the source.
 ppt.md
+
+# Firebase CLI local deploy cache - not part of the source.
+.firebase/
